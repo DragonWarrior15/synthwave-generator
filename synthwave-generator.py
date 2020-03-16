@@ -20,9 +20,11 @@ import torch.optim as optim
 ###### Parameters Definition ######
 # training params
 num_epochs = 1
+training_size = 0.95
 batch_size = 256
 batch_save_frequency = 0.01
 total_batches_to_save = 5000
+
 # data params
 num_input_steps = 44100//20
 num_output_steps = num_input_steps//2
@@ -33,6 +35,7 @@ do_model_training = True
 do_model_prediction = False
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
+np.random.seed(42)
 
 ############ Data Prep ############
 if(do_data_prep):
@@ -156,11 +159,17 @@ if(do_model_training):
     else:
         for _, _, file_list in os.walk('data'):
             pass
-    file_list = file_list[:10]
     # perform training
     for epoch_num in range(num_epochs):
-        epoch_loss = 0
+        epoch_training_loss = 0
+        epoch_validation_loss = 0
+        # shuffle the file list to remove any associated bias
+        np.random.shuffle(file_list)
         for i in tqdm(range(len(file_list))):
+            # determine whether the index is for train or validation
+            training_index = True
+            if(i > len(file_list) * training_size):
+                training_index = False
             # set the gradients to zero before start of every batch
             optimizer.zero_grad()
             # read the batch for training
@@ -173,15 +182,21 @@ if(do_model_training):
             y_pred = model(X, num_channels, num_output_steps)
             # calculate loss
             loss = loss_fn(y_pred, y)
-            # calculate gradients
-            loss.backward()
-            # step the optimizer
-            optimizer.step()
-            # update total epoch loss
-            epoch_loss += loss.item()
-        epoch_loss /= len(file_list)
-        print(str('Epoch {:0' + str(int(np.log10(num_epochs))) + 'd} | Training Loss : {:.5f}')\
-              .format(epoch_num, epoch_loss))
+            if(training_index):
+                # calculate gradients
+                loss.backward()
+                # step the optimizer
+                optimizer.step()
+                # update total epoch loss
+                epoch_training_loss += loss.item()
+            else:
+                epoch_validation_loss += loss.item()
+        
+        epoch_training_loss /= len(file_list) * training_size
+        epoch_training_loss /= len(file_list) * (1 - training_size)
 
-    # save the model
-    torch.save(model.state_dict(), 'seq2seq_model')
+        print(str('Epoch {:0' + str(int(np.log10(num_epochs))) + 'd} | Training Loss : {:.5f} | Validation Loss : {:.5f}')\
+              .format(epoch_num, epoch_training_loss, epoch_validation_loss))
+
+        # save the model
+        torch.save(model.state_dict(), 'models/seq2seq_model_epoch_{:05d}'.format(epoch_num))
